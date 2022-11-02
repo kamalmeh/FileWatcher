@@ -1,0 +1,107 @@
+#!/bin/bash
+
+## GLOBAL CONFIGURATION
+MAIL=user@domain.com
+
+#########################################################################
+# Function Name: TRANSFER
+# Description:  It initiates the transfer
+#########################################################################
+TRANSFER()
+{
+	if [ $# != 7 ]; then
+        	echo "Incorrect parameter passed to the function TRANSFER" 
+		echo "USAGE: TRANSFER <sourcePath> <sourceFile> <targetPath> <targetFile> <targetHost> <targetUser> <transferMode>"
+        	exit 4
+	fi
+	sourcePath=$1
+	file=$2
+	targetPath=$3
+	targetFile=$4
+	targetHost=$5
+	targetUser=$6
+	transferMode=$7
+	echo "CFSEND Process .............................................: Started" >> /tmp/mail
+	echo "Source path is .............................................: ${sourcePath}" >> /tmp/mail
+	echo "Source file is .............................................: ${file}" >> /tmp/mail
+	echo "Target path is .............................................: ${targetPath}" >> /tmp/mail
+	echo "Target file is .............................................: ${targetFile}" >> /tmp/mail
+	echo "Target server is ...........................................: ${targetHost}" >> /tmp/mail
+	echo "Transfer Mode is ...........................................: ${transferMode}" >> /tmp/mail
+	if [[ ${transferMode^^} == "LIVE" ]]     # ^^ Converts into CAPITAL latters
+	then
+		echo "/CyberFusion/cfsend lf:${sourcePath}/${file} rf:${targetPath}/${targetFile} CR:${targetUser} ip:${targetHost}" >> /tmp/mail
+		/CyberFusion/cfsend lf:${sourcePath}/${file} rf:${targetPath}/${targetFile} CR:${targetUser} ip:${targetHost} >> /tmp/mail
+	else
+		echo "/CyberFusion/cfsend lf:${sourcePath}/${file} rf:${targetPath}/${targetFile} CR:${targetUser} ip:${targetHost}" >> /tmp/mail
+	fi
+	if [[ $? != 0 ]]
+        then
+		echo "CFSEND Status .............................................: Failure" >> /tmp/mail
+		mailx -s "${file} PROBLEM Sending file ${sourcePath} to ${targetPath}" ${MAIL} < /tmp/mail
+		rm -f /tmp/mail
+		exit 5
+        else
+		echo "CFSEND Status .............................................: Success"
+		rm -f /tmp/mail
+	fi
+}
+
+#########################################################################
+# Function Name: CHECK_AND_TRANSFER
+# Description:  This function first checks the file is arrived fully.
+#		If not, then it finishes and process is terminated.
+#		File will be picked up again in next iteration of the
+#		main script
+#		If file is arrived completely, it initiates the transfer
+#########################################################################
+CHECK_AND_TRANSFER()
+{
+	file=$1
+	echo "Checking if file[${file}] has arrived fully"
+	opt1=$(ls -lt ${WATCH_DIR}/${file})
+	sleep 60
+	opt2=$(ls -lt ${WATCH_DIR}/${file})
+	if [[ ${opt1} != ${opt2} ]]
+	then
+		echo "File [${file}] is still arriving, ignoring..."
+		exit 0
+	else
+		exec < ${CONFIG_FILE} 
+		while read line
+		do
+			patt=$(echo ${line} | cut -d"|" -f2)
+			for item in $(ls -1 ${WATCH_DIR}/${patt})
+			do
+				test="${WATCH_DIR}/${file}"
+				if [[ ${item} == ${test} ]]
+				then
+					MATCHED=1
+				fi
+			done
+			pattFile=$(ls -1 ${WATCH_DIR}/${patt})
+			if [[ ${pattFile} == ${WATCH_DIR}/${file} ]]
+			then
+				if [[ ${MATCHED} -eq 1 ]]
+				then
+					echo "Found: ${WATCH_DIR}/${file}"
+					mv ${WATCH_DIR}/${file} ${PROC_DIR}/${file}
+					if [[ $? -ne 0 ]]
+					then
+						echo "ERROR: Moving ${file} from ${WATCH_DIR} to ${PROC_DIR}"
+						mailx -s "ERROR: Moving ${file} from ${WATCH_DIR} to ${PROC_DIR}" $MAIL < $LOG
+						exit 6
+					fi
+					sourcePath=${PROC_DIR}
+					sourceFile=${file}
+					targetPath=$(echo ${line} | cut -d"|" -f3)
+					targetFile=$(echo ${line} | cut -d"|" -f4)
+					targetHost=$(echo ${line} | cut -d"|" -f5)
+					targetUser=$(echo ${line} | cut -d"|" -f6)
+					transferMode=$(echo ${line} | cut -d"|" -f7)
+					TRANSFER ${sourcePath} ${sourceFile} ${targetPath} ${targetFile} ${targetHost} ${targetUser} ${transferMode}
+				fi
+			fi
+		done
+	fi
+}
